@@ -135,6 +135,14 @@ enum {
     GRALLOC_USAGE_PRIVATE_MASK          = 0xF0000000,
 };
 
+#ifdef QCOM_HARDWARE
+enum {
+    /* Gralloc perform enums */
+    GRALLOC_MODULE_PERFORM_UPDATE_BUFFER_GEOMETRY = 0,
+    GRALLOC_MODULE_PERFORM_PRIVATE_START
+};
+#endif
+
 /*****************************************************************************/
 
 /**
