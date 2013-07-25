@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "Camera2_test"
-#define LOG_NDEBUG 0
+//#define LOG_NDEBUG 0
 
 #include <utils/Log.h>
 #include <gtest/gtest.h>
@@ -28,12 +28,15 @@
 #include <system/camera_metadata.h>
 
 #include "camera2_utils.h"
+#include "TestExtensions.h"
 
 namespace android {
+namespace camera2 {
+namespace tests {
 
 class Camera2Test: public testing::Test {
   public:
-    static void SetUpTestCase() {
+    void SetUpModule() {
         int res;
 
         hw_module_t *module = NULL;
@@ -57,10 +60,10 @@ class Camera2Test: public testing::Test {
         }
 
         int16_t version2_0 = CAMERA_MODULE_API_VERSION_2_0;
-        ASSERT_EQ(version2_0, module->module_api_version)
+        ASSERT_LE(version2_0, module->module_api_version)
                 << "Camera module version is 0x"
                 << std::hex << module->module_api_version
-                << ", not 2.0. (0x"
+                << ", should be at least 2.0. (0x"
                 << std::hex << CAMERA_MODULE_API_VERSION_2_0 << ")";
 
         sCameraModule = reinterpret_cast<camera_module_t*>(module);
@@ -89,7 +92,8 @@ class Camera2Test: public testing::Test {
                 std::cout << "    Version: 0x" << std::hex <<
                         info.device_version  << std::endl;
             }
-            if (info.device_version >= CAMERA_DEVICE_API_VERSION_2_0) {
+            if (info.device_version >= CAMERA_DEVICE_API_VERSION_2_0 &&
+                    info.device_version < CAMERA_DEVICE_API_VERSION_3_0) {
                 sCameraSupportsHal2[i] = true;
                 ASSERT_TRUE(NULL != info.static_camera_characteristics);
                 IF_ALOGV() {
@@ -101,6 +105,11 @@ class Camera2Test: public testing::Test {
                 sCameraSupportsHal2[i] = false;
             }
         }
+    }
+
+    void TearDownModule() {
+        hw_module_t *module = reinterpret_cast<hw_module_t*>(sCameraModule);
+        ASSERT_EQ(0, HWModuleHelpers::closeModule(module));
     }
 
     static const camera_module_t *getCameraModule() {
@@ -173,12 +182,15 @@ class Camera2Test: public testing::Test {
         return OK;
     }
 
-    static status_t closeCameraDevice(camera2_device_t *cam_dev) {
+    static status_t closeCameraDevice(camera2_device_t **cam_dev) {
         int res;
+        if (*cam_dev == NULL ) return OK;
+
         ALOGV("Closing camera %p", cam_dev);
 
-        hw_device_t *dev = reinterpret_cast<hw_device_t *>(cam_dev);
+        hw_device_t *dev = reinterpret_cast<hw_device_t *>(*cam_dev);
         res = dev->close(dev);
+        *cam_dev = NULL;
         return res;
     }
 
@@ -187,7 +199,7 @@ class Camera2Test: public testing::Test {
         status_t res;
 
         if (mDevice != NULL) {
-            closeCameraDevice(mDevice);
+            closeCameraDevice(&mDevice);
         }
         mDevice = openCameraDevice(id);
         ASSERT_TRUE(NULL != mDevice) << "Failed to open camera device";
@@ -206,7 +218,7 @@ class Camera2Test: public testing::Test {
 
     }
 
-    void setUpStream(sp<ISurfaceTexture> consumer,
+    void setUpStream(sp<IGraphicBufferProducer> consumer,
             int width, int height, int format, int *id) {
         status_t res;
 
@@ -275,21 +287,51 @@ class Camera2Test: public testing::Test {
         *count = availableSizes.count;
     }
 
+    status_t waitUntilDrained() {
+        static const uint32_t kSleepTime = 50000; // 50 ms
+        static const uint32_t kMaxSleepTime = 10000000; // 10 s
+        ALOGV("%s: Camera %d: Starting wait", __FUNCTION__, mId);
+
+        // TODO: Set up notifications from HAL, instead of sleeping here
+        uint32_t totalTime = 0;
+        while (mDevice->ops->get_in_progress_count(mDevice) > 0) {
+            usleep(kSleepTime);
+            totalTime += kSleepTime;
+            if (totalTime > kMaxSleepTime) {
+                ALOGE("%s: Waited %d us, %d requests still in flight", __FUNCTION__,
+                        mDevice->ops->get_in_progress_count(mDevice), totalTime);
+                return TIMED_OUT;
+            }
+        }
+        ALOGV("%s: Camera %d: HAL is idle", __FUNCTION__, mId);
+        return OK;
+    }
+
     virtual void SetUp() {
+        TEST_EXTENSION_FORKING_SET_UP;
+
+        SetUpModule();
+
         const ::testing::TestInfo* const testInfo =
                 ::testing::UnitTest::GetInstance()->current_test_info();
+        (void)testInfo;
 
-        ALOGV("*** Starting test %s in test case %s", testInfo->name(), testInfo->test_case_name());
+        ALOGV("*** Starting test %s in test case %s", testInfo->name(),
+              testInfo->test_case_name());
         mDevice = NULL;
     }
 
     virtual void TearDown() {
+        TEST_EXTENSION_FORKING_TEAR_DOWN;
+
         for (unsigned int i = 0; i < mStreams.size(); i++) {
             delete mStreams[i];
         }
         if (mDevice != NULL) {
-            closeCameraDevice(mDevice);
+            closeCameraDevice(&mDevice);
         }
+
+        TearDownModule();
     }
 
     camera2_device    *mDevice;
@@ -317,6 +359,9 @@ static const nsecs_t SEC = 1000*MSEC;
 
 
 TEST_F(Camera2Test, OpenClose) {
+
+    TEST_EXTENSION_FORKING_INIT;
+
     status_t res;
 
     for (int id = 0; id < getNumCameras(); id++) {
@@ -325,12 +370,15 @@ TEST_F(Camera2Test, OpenClose) {
         camera2_device_t *d = openCameraDevice(id);
         ASSERT_TRUE(NULL != d) << "Failed to open camera device";
 
-        res = closeCameraDevice(d);
+        res = closeCameraDevice(&d);
         ASSERT_EQ(NO_ERROR, res) << "Failed to close camera device";
     }
 }
 
 TEST_F(Camera2Test, Capture1Raw) {
+
+    TEST_EXTENSION_FORKING_INIT;
+
     status_t res;
 
     for (int id = 0; id < getNumCameras(); id++) {
@@ -349,6 +397,18 @@ TEST_F(Camera2Test, Capture1Raw) {
 
         getResolutionList(format,
                 &rawResolutions, &rawResolutionsCount);
+
+        if (rawResolutionsCount <= 0) {
+            const ::testing::TestInfo* const test_info =
+                ::testing::UnitTest::GetInstance()->current_test_info();
+            std::cerr << "Skipping test "
+                      << test_info->test_case_name() << "."
+                      << test_info->name()
+                      << " because the optional format was not available: "
+                      << "RAW_SENSOR" << std::endl;
+            return;
+        }
+
         ASSERT_LT((size_t)0, rawResolutionsCount);
 
         // Pick first available raw resolution
@@ -363,7 +423,7 @@ TEST_F(Camera2Test, Capture1Raw) {
         camera_metadata_t *request;
         request = allocate_camera_metadata(20, 2000);
 
-        uint8_t metadataMode = ANDROID_REQUEST_METADATA_FULL;
+        uint8_t metadataMode = ANDROID_REQUEST_METADATA_MODE_FULL;
         add_camera_metadata_entry(request,
                 ANDROID_REQUEST_METADATA_MODE,
                 (void**)&metadataMode, 1);
@@ -384,6 +444,10 @@ TEST_F(Camera2Test, Capture1Raw) {
         add_camera_metadata_entry(request,
                 ANDROID_SENSOR_SENSITIVITY,
                 (void**)&sensitivity, 1);
+        uint8_t requestType = ANDROID_REQUEST_TYPE_CAPTURE;
+        add_camera_metadata_entry(request,
+                ANDROID_REQUEST_TYPE,
+                (void**)&requestType, 1);
 
         uint32_t hourOfDay = 12;
         add_camera_metadata_entry(request,
@@ -436,15 +500,19 @@ TEST_F(Camera2Test, Capture1Raw) {
         res = rawConsumer->unlockBuffer(buffer);
         ASSERT_EQ(NO_ERROR, res);
 
+        ASSERT_EQ(OK, waitUntilDrained());
         ASSERT_NO_FATAL_FAILURE(disconnectStream(streamId));
 
-        res = closeCameraDevice(mDevice);
+        res = closeCameraDevice(&mDevice);
         ASSERT_EQ(NO_ERROR, res) << "Failed to close camera device";
 
     }
 }
 
 TEST_F(Camera2Test, CaptureBurstRaw) {
+
+    TEST_EXTENSION_FORKING_INIT;
+
     status_t res;
 
     for (int id = 0; id < getNumCameras(); id++) {
@@ -463,6 +531,18 @@ TEST_F(Camera2Test, CaptureBurstRaw) {
 
         getResolutionList(format,
                 &rawResolutions, &rawResolutionsCount);
+
+        if (rawResolutionsCount <= 0) {
+            const ::testing::TestInfo* const test_info =
+                ::testing::UnitTest::GetInstance()->current_test_info();
+            std::cerr << "Skipping test "
+                      << test_info->test_case_name() << "."
+                      << test_info->name()
+                      << " because the optional format was not available: "
+                      << "RAW_SENSOR" << std::endl;
+            return;
+        }
+
         ASSERT_LT((uint32_t)0, rawResolutionsCount);
 
         // Pick first available raw resolution
@@ -477,7 +557,7 @@ TEST_F(Camera2Test, CaptureBurstRaw) {
         camera_metadata_t *request;
         request = allocate_camera_metadata(20, 2000);
 
-        uint8_t metadataMode = ANDROID_REQUEST_METADATA_FULL;
+        uint8_t metadataMode = ANDROID_REQUEST_METADATA_MODE_FULL;
         add_camera_metadata_entry(request,
                 ANDROID_REQUEST_METADATA_MODE,
                 (void**)&metadataMode, 1);
@@ -494,6 +574,10 @@ TEST_F(Camera2Test, CaptureBurstRaw) {
         add_camera_metadata_entry(request,
                 ANDROID_SENSOR_SENSITIVITY,
                 (void**)&sensitivity, 1);
+        uint8_t requestType = ANDROID_REQUEST_TYPE_CAPTURE;
+        add_camera_metadata_entry(request,
+                ANDROID_REQUEST_TYPE,
+                (void**)&requestType, 1);
 
         uint32_t hourOfDay = 12;
         add_camera_metadata_entry(request,
@@ -577,6 +661,9 @@ TEST_F(Camera2Test, CaptureBurstRaw) {
 }
 
 TEST_F(Camera2Test, ConstructDefaultRequests) {
+
+    TEST_EXTENSION_FORKING_INIT;
+
     status_t res;
 
     for (int id = 0; id < getNumCameras(); id++) {
@@ -591,7 +678,7 @@ TEST_F(Camera2Test, ConstructDefaultRequests) {
                     i,
                     &request);
             EXPECT_EQ(NO_ERROR, res) <<
-                    "Unable to construct request from template type %d", i;
+                    "Unable to construct request from template type " << i;
             EXPECT_TRUE(request != NULL);
             EXPECT_LT((size_t)0, get_camera_metadata_entry_count(request));
             EXPECT_LT((size_t)0, get_camera_metadata_data_count(request));
@@ -639,7 +726,7 @@ TEST_F(Camera2Test, Capture1Jpeg) {
         camera_metadata_t *request;
         request = allocate_camera_metadata(20, 2000);
 
-        uint8_t metadataMode = ANDROID_REQUEST_METADATA_FULL;
+        uint8_t metadataMode = ANDROID_REQUEST_METADATA_MODE_FULL;
         add_camera_metadata_entry(request,
                 ANDROID_REQUEST_METADATA_MODE,
                 (void**)&metadataMode, 1);
@@ -660,6 +747,10 @@ TEST_F(Camera2Test, Capture1Jpeg) {
         add_camera_metadata_entry(request,
                 ANDROID_SENSOR_SENSITIVITY,
                 (void**)&sensitivity, 1);
+        uint8_t requestType = ANDROID_REQUEST_TYPE_CAPTURE;
+        add_camera_metadata_entry(request,
+                ANDROID_REQUEST_TYPE,
+                (void**)&requestType, 1);
 
         uint32_t hourOfDay = 12;
         add_camera_metadata_entry(request,
@@ -712,13 +803,15 @@ TEST_F(Camera2Test, Capture1Jpeg) {
         res = jpegConsumer->unlockBuffer(buffer);
         ASSERT_EQ(NO_ERROR, res);
 
+        ASSERT_EQ(OK, waitUntilDrained());
         ASSERT_NO_FATAL_FAILURE(disconnectStream(streamId));
 
-        res = closeCameraDevice(mDevice);
+        res = closeCameraDevice(&mDevice);
         ASSERT_EQ(NO_ERROR, res) << "Failed to close camera device";
 
     }
 }
 
-
+} // namespace tests
+} // namespace camera2
 } // namespace android

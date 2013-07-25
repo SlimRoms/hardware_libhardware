@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
+#ifndef __ANDROID_HAL_CAMERA2_TESTS_UTILS__
+#define __ANDROID_HAL_CAMERA2_TESTS_UTILS__
+
 // Utility classes for camera2 HAL testing
 
 #include <system/camera_metadata.h>
 #include <hardware/camera2.h>
 
-#include <gui/SurfaceTextureClient.h>
+#include <gui/Surface.h>
 #include <gui/CpuConsumer.h>
 
 #include <utils/List.h>
@@ -27,6 +30,8 @@
 #include <utils/Condition.h>
 
 namespace android {
+namespace camera2 {
+namespace tests {
 
 /**
  * Queue class for both sending requests to a camera2 device, and for receiving
@@ -156,12 +161,12 @@ class NotifierListener {
 };
 
 /**
- * Adapter from an ISurfaceTexture interface to camera2 device stream ops.
+ * Adapter from an IGraphicBufferProducer interface to camera2 device stream ops.
  * Also takes care of allocating/deallocating stream in device interface
  */
 class StreamAdapter: public camera2_stream_ops {
   public:
-    StreamAdapter(sp<ISurfaceTexture> consumer);
+    StreamAdapter(sp<IGraphicBufferProducer> consumer);
 
     ~StreamAdapter();
 
@@ -233,4 +238,13 @@ class FrameWaiter : public CpuConsumer::FrameAvailableListener {
     Condition mCondition;
 };
 
+struct HWModuleHelpers {
+    /* attempt to unload the library with dlclose */
+    static int closeModule(hw_module_t* module);
+};
+
 }
+}
+}
+
+#endif
