@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2011 The Android Open Source Project
- * Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +21,19 @@
 #define ANDROID_AUDIO_HAL_INTERFACE_H
 
 #include <stdint.h>
-#include <string.h>
 #include <strings.h>
 #include <sys/cdefs.h>
 #include <sys/types.h>
+#include <string.h>
 
 #include <cutils/bitops.h>
 
 #include <hardware/hardware.h>
 #include <system/audio.h>
 #include <hardware/audio_effect.h>
+#ifdef QCOM_LISTEN_FEATURE_ENABLE
+#include <listen_types.h>
+#endif
 
 __BEGIN_DECLS
 
@@ -140,6 +144,13 @@ __BEGIN_DECLS
 
 /* Query ADSP Status */
 #define AUDIO_PARAMETER_KEY_ADSP_STATUS "ADSP_STATUS"
+
+/* Query if Proxy can be Opend */
+#define AUDIO_CAN_OPEN_PROXY "can_open_proxy"
+
+/* Query fm volume */
+#define AUDIO_PARAMETER_KEY_FM_VOLUME "fm_volume"
+
 /**************************************/
 
 /* common audio stream configuration parameters */
@@ -150,8 +161,15 @@ struct audio_config {
 };
 
 typedef struct audio_config audio_config_t;
+
 #ifdef QCOM_HARDWARE
-typedef struct buf_info;
+/** Structure to save buffer information for applying effects for
+ *  LPA buffers */
+struct buf_info {
+    int bufsize;
+    int nBufs;
+    int **buffers;
+};
 #endif
 
 /* common audio stream parameters and operations */
@@ -277,6 +295,7 @@ struct audio_stream_out {
     int (*get_render_position)(const struct audio_stream_out *stream,
                                uint32_t *dsp_frames);
 
+#ifndef ICS_AUDIO_BLOB
 #ifdef QCOM_HARDWARE
     /**
      * start audio data rendering
@@ -305,6 +324,7 @@ struct audio_stream_out {
      */
     int (*get_next_write_timestamp)(const struct audio_stream_out *stream,
                                     int64_t *timestamp);
+
 #ifdef QCOM_HARDWARE
     /**
     * return the current timestamp after quering to the driver
@@ -328,6 +348,7 @@ struct audio_stream_out {
      */
     int (*is_buffer_available) (const struct audio_stream_out *stream,
                                      int *isAvail);
+#endif
 #endif
 
 };
@@ -406,11 +427,13 @@ typedef struct audio_stream_in audio_stream_in_t;
 static inline size_t audio_stream_frame_size(const struct audio_stream *s)
 {
     size_t chan_samp_sz;
+#ifdef QCOM_HARDWARE
     uint32_t chan_mask = s->get_channels(s);
     int format = s->get_format(s);
+    char *tmpparam;
+    int isParamEqual;
 
-#ifdef QCOM_HARDWARE
-    if (!s)
+    if(!s)
         return 0;
 
     if (audio_is_input_channel(chan_mask)) {
@@ -419,16 +442,17 @@ static inline size_t audio_stream_frame_size(const struct audio_stream *s)
                       AUDIO_CHANNEL_IN_5POINT1);
     }
 
-    if(!strncmp(s->get_parameters(s, "voip_flag"),"voip_flag=1",sizeof("voip_flag=1"))) {
+    tmpparam = s->get_parameters(s, "voip_flag");
+    isParamEqual = !strncmp(tmpparam,"voip_flag=1", sizeof("voip_flag=1"));
+    free(tmpparam);
+    if(isParamEqual) {
         if(format != AUDIO_FORMAT_PCM_8_BIT)
             return popcount(chan_mask) * sizeof(int16_t);
         else
             return popcount(chan_mask) * sizeof(int8_t);
     }
-#endif
 
     switch (format) {
-#ifdef QCOM_HARDWARE
     case AUDIO_FORMAT_AMR_NB:
         chan_samp_sz = 32;
         break;
@@ -438,6 +462,11 @@ static inline size_t audio_stream_frame_size(const struct audio_stream *s)
     case AUDIO_FORMAT_QCELP:
         chan_samp_sz = 35;
         break;
+    case AUDIO_FORMAT_AMR_WB:
+        chan_samp_sz = 61;
+        break;
+#else
+    switch (s->get_format(s)) {
 #endif
     case AUDIO_FORMAT_PCM_16_BIT:
         chan_samp_sz = sizeof(int16_t);
@@ -448,7 +477,11 @@ static inline size_t audio_stream_frame_size(const struct audio_stream *s)
         break;
     }
 
+#ifdef QCOM_HARDWARE
     return popcount(chan_mask) * chan_samp_sz;
+#else
+    return popcount(s->get_channels(s)) * chan_samp_sz;
+#endif
 }
 
 
@@ -570,7 +603,7 @@ struct audio_hw_device {
     void (*close_output_stream)(struct audio_hw_device *dev,
                                 struct audio_stream_out* stream_out);
 
-#ifdef QCOM_HARDWARE
+#if defined (QCOM_HARDWARE) || defined (STE_SAMSUNG_HARDWARE)
     /** This method creates and opens the audio hardware output
      *  for broadcast stream */
     int (*open_broadcast_stream)(struct audio_hw_device *dev, uint32_t devices,
@@ -620,6 +653,20 @@ struct audio_hw_device {
      */
     int (*get_master_mute)(struct audio_hw_device *dev, bool *mute);
 #endif
+
+#ifdef QCOM_LISTEN_FEATURE_ENABLE
+    /** This method opens the listen session and returns a handle */
+    status_t (*open_listen_session)(struct audio_hw_device *dev,
+                                    struct listen_session** handle);
+
+    /** This method closes the listen session  */
+    status_t (*close_listen_session)(struct audio_hw_device *dev,
+                                     struct listen_session* handle);
+
+    /** This method sets the mad observer callback  */
+    status_t (*set_mad_observer)(struct audio_hw_device *dev,
+                                 listen_callback_t cb_func);
+#endif
 };
 typedef struct audio_hw_device audio_hw_device_t;
 
@@ -638,14 +685,6 @@ static inline int audio_hw_device_close(struct audio_hw_device* device)
 }
 
 #ifdef QCOM_HARDWARE
-/** Structure to save buffer information for applying effects for
- *  LPA buffers */
-struct buf_info {
-    int bufsize;
-    int nBufs;
-    int **buffers;
-};
-
 #ifdef __cplusplus
 /**
  *Observer class to post the Events from HAL to Flinger

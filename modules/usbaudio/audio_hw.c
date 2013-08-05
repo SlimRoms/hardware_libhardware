@@ -76,8 +76,12 @@ static int start_output_stream(struct stream_out *out)
     if ((adev->card < 0) || (adev->device < 0))
         return -EINVAL;
 
+    ALOGD("start_output_stream()");
+#ifdef QCOM_HARDWARE
+    out->pcm = pcm_open(adev->card, adev->device, PCM_OUT | PCM_MMAP | PCM_NOIRQ , &pcm_config);
+#else
     out->pcm = pcm_open(adev->card, adev->device, PCM_OUT, &pcm_config);
-
+#endif
     if (out->pcm && !pcm_is_ready(out->pcm)) {
         ALOGE("pcm_open() failed: %s", pcm_get_error(out->pcm));
         pcm_close(out->pcm);
@@ -127,6 +131,7 @@ static int out_standby(struct audio_stream *stream)
     pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
 
+    ALOGD("out_standby");
     if (!out->standby) {
         pcm_close(out->pcm);
         out->pcm = NULL;
@@ -164,6 +169,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
     if (ret >= 0)
         adev->device = atoi(value);
 
+    ALOGD("out_set_parameters card [%d] device[%d]", adev->card, adev->device);
     pthread_mutex_unlock(&adev->lock);
     str_parms_destroy(parms);
 
@@ -193,6 +199,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     int ret;
     struct stream_out *out = (struct stream_out *)stream;
 
+    ALOGD("out_write() USB HAL writing %d", bytes);
     pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
@@ -203,14 +210,22 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         out->standby = false;
     }
 
+#ifdef QCOM_HARDWARE
+    ret = pcm_mmap_write(out->pcm, (void *)buffer, bytes);
+#else
     pcm_write(out->pcm, (void *)buffer, bytes);
-
+#endif
     pthread_mutex_unlock(&out->lock);
     pthread_mutex_unlock(&out->dev->lock);
 
+#ifdef QCOM_HARDWARE
+    return ret? ret: bytes;
+#else
     return bytes;
+#endif
 
 err:
+    ALOGE("out_write() ERR");
     pthread_mutex_unlock(&out->lock);
 
     if (ret != 0) {
