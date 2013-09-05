@@ -78,9 +78,7 @@ enum {
      * by SurfaceFlinger (just as if compositionType was set to HWC_OVERLAY).
      */
     HWC_SKIP_LAYER = 0x00000001,
-#ifdef QCOM_HARDWARE
     HWC_SCREENSHOT_ANIMATOR_LAYER = 0x00000002,
-#endif
 };
 
 /*
