@@ -83,8 +83,7 @@ typedef enum {
     BT_STATUS_PARM_INVALID,
     BT_STATUS_UNHANDLED,
     BT_STATUS_AUTH_FAILURE,
-    BT_STATUS_RMT_DEV_DOWN,
-    BT_STATUS_AUTH_REJECTED
+    BT_STATUS_RMT_DEV_DOWN
 
 } bt_status_t;
 
@@ -201,14 +200,7 @@ typedef enum {
      * Data type   - int32_t.
      */
     BT_PROPERTY_REMOTE_RSSI,
-
-   /**
-    * Description - Trust value of the remote device
-    * Access mode - GET and SET
-    * Data type   - boolean.
-    */
-    BT_PROPERTY_REMOTE_TRUST_VALUE,
-   /**
+    /**
      * Description - Remote version info
      * Access mode - SET/GET.
      * Data type   - bt_remote_version_t.
