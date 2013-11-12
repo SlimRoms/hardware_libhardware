@@ -428,6 +428,7 @@ struct audio_stream_out {
      */
     int (*get_presentation_position)(const struct audio_stream_out *stream,
                                uint64_t *frames, struct timespec *timestamp);
+#endif
 
 #ifdef QCOM_HARDWARE
     /**
@@ -452,7 +453,6 @@ struct audio_stream_out {
      */
     int (*is_buffer_available) (const struct audio_stream_out *stream,
                                      int *isAvail);
-#endif
 #endif
 };
 typedef struct audio_stream_out audio_stream_out_t;
@@ -491,6 +491,7 @@ typedef struct audio_stream_in audio_stream_in_t;
 static inline size_t audio_stream_frame_size(const struct audio_stream *s)
 {
     size_t chan_samp_sz;
+#ifdef QCOM_HARDWARE
     uint32_t chan_mask = s->get_channels(s);
     int format = s->get_format(s);
     char *tmpparam;
@@ -535,6 +536,16 @@ static inline size_t audio_stream_frame_size(const struct audio_stream *s)
         break;
     }
     return popcount(chan_mask) * chan_samp_sz;
+#else
+    audio_format_t format = s->get_format(s);
+
+    if (audio_is_linear_pcm(format)) {
+        chan_samp_sz = audio_bytes_per_sample(format);
+        return popcount(s->get_channels(s)) * chan_samp_sz;
+    }
+
+    return sizeof(int8_t);
+#endif
 }
 
 
