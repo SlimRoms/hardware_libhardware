@@ -1,6 +1,5 @@
 Default (and possibly architecture dependents) HAL modules go here. 
 
-
 libhardware.so eventually should contain *just* the HAL hub
 (hardware.c), everything in it should be rewritten as modules.
 
