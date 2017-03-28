@@ -55,7 +55,12 @@ __BEGIN_DECLS
  */
 #define AUDIO_DEVICE_API_VERSION_0_0 HARDWARE_DEVICE_API_VERSION(0, 0)
 #define AUDIO_DEVICE_API_VERSION_1_0 HARDWARE_DEVICE_API_VERSION(1, 0)
+#define AUDIO_DEVICE_API_VERSION_2_0 HARDWARE_DEVICE_API_VERSION(2, 0)
+#ifndef ICS_AUDIO_BLOB
+#define AUDIO_DEVICE_API_VERSION_CURRENT AUDIO_DEVICE_API_VERSION_2_0
+#else
 #define AUDIO_DEVICE_API_VERSION_CURRENT AUDIO_DEVICE_API_VERSION_1_0
+#endif
 
 /**
  * List of known audio HAL modules. This is the base name of the audio HAL
@@ -67,6 +72,7 @@ __BEGIN_DECLS
 #define AUDIO_HARDWARE_MODULE_ID_PRIMARY "primary"
 #define AUDIO_HARDWARE_MODULE_ID_A2DP "a2dp"
 #define AUDIO_HARDWARE_MODULE_ID_USB "usb"
+#define AUDIO_HARDWARE_MODULE_ID_REMOTE_SUBMIX "r_submix"
 
 /**************************************/
 
@@ -131,6 +137,9 @@ __BEGIN_DECLS
 
 /* Query if a2dp  is supported */
 #define AUDIO_PARAMETER_KEY_HANDLE_A2DP_DEVICE "isA2dpDeviceSupported"
+
+/* Query ADSP Status */
+#define AUDIO_PARAMETER_KEY_ADSP_STATUS "ADSP_STATUS"
 /**************************************/
 
 /* common audio stream configuration parameters */
@@ -141,6 +150,9 @@ struct audio_config {
 };
 
 typedef struct audio_config audio_config_t;
+#ifdef QCOM_HARDWARE
+typedef struct buf_info;
+#endif
 
 /* common audio stream parameters and operations */
 struct audio_stream {
@@ -304,6 +316,18 @@ struct audio_stream_out {
      */
     int (*set_observer)(const struct audio_stream_out *stream,
                                void *observer);
+    /**
+     * Get the physical address of the buffer allocated in the
+     * driver
+     */
+    int (*get_buffer_info) (const struct audio_stream_out *stream,
+                                struct buf_info **buf);
+    /**
+     * Check if next buffer is available. Waits until next buffer is
+     * available
+     */
+    int (*is_buffer_available) (const struct audio_stream_out *stream,
+                                     int *isAvail);
 #endif
 
 };
@@ -379,29 +403,27 @@ typedef struct audio_stream_in audio_stream_in_t;
 /**
  * return the frame size (number of bytes per sample).
  */
-static inline size_t audio_stream_frame_size(struct audio_stream *s)
+static inline size_t audio_stream_frame_size(const struct audio_stream *s)
 {
     size_t chan_samp_sz;
     uint32_t chan_mask = s->get_channels(s);
     int format = s->get_format(s);
 
 #ifdef QCOM_HARDWARE
-    if (audio_is_input_channel(chan_mask)) {
-        chan_mask &= (AUDIO_CHANNEL_IN_STEREO | \
-                      AUDIO_CHANNEL_IN_MONO );
-    }
-
-    if(!strcmp(s->get_parameters(s, "voip_flag"),"voip_flag=1")) {
-        if(format != AUDIO_FORMAT_PCM_8_BIT)
-            return popcount(chan_mask) * sizeof(int16_t);
-        else
-            return popcount(chan_mask) * sizeof(int8_t);
-    }
+    if (!s)
+        return 0;
 
     if (audio_is_input_channel(chan_mask)) {
         chan_mask &= (AUDIO_CHANNEL_IN_STEREO | \
                       AUDIO_CHANNEL_IN_MONO | \
                       AUDIO_CHANNEL_IN_5POINT1);
+    }
+
+    if(!strncmp(s->get_parameters(s, "voip_flag"),"voip_flag=1",sizeof("voip_flag=1"))) {
+        if(format != AUDIO_FORMAT_PCM_8_BIT)
+            return popcount(chan_mask) * sizeof(int16_t);
+        else
+            return popcount(chan_mask) * sizeof(int8_t);
     }
 #endif
 
@@ -449,6 +471,12 @@ struct audio_hw_device {
      * each audio_hw_device implementation.
      *
      * Return value is a bitmask of 1 or more values of audio_devices_t
+     *
+     * NOTE: audio HAL implementations starting with
+     * AUDIO_DEVICE_API_VERSION_2_0 do not implement this function.
+     * All supported devices should be listed in audio_policy.conf
+     * file and the audio policy manager must choose the appropriate
+     * audio module based on information in this file.
      */
     uint32_t (*get_supported_devices)(const struct audio_hw_device *dev);
 
@@ -474,7 +502,7 @@ struct audio_hw_device {
      * master volume control.  AudioFlinger will query this value from the
      * primary audio HAL when the service starts and use the value for setting
      * the initial master volume across all HALs.  HALs which do not support
-     * this method should may leave it set to NULL.
+     * this method may leave it set to NULL.
      */
     int (*get_master_volume)(struct audio_hw_device *dev, float *volume);
 #endif
@@ -575,6 +603,23 @@ struct audio_hw_device {
 
     /** This method dumps the state of the audio hardware */
     int (*dump)(const struct audio_hw_device *dev, int fd);
+
+#ifndef ICS_AUDIO_BLOB
+    /**
+     * set the audio mute status for all audio activities.  If any value other
+     * than 0 is returned, the software mixer will emulate this capability.
+     */
+    int (*set_master_mute)(struct audio_hw_device *dev, bool mute);
+
+    /**
+     * Get the current master mute status for the HAL, if the HAL supports
+     * master mute control.  AudioFlinger will query this value from the primary
+     * audio HAL when the service starts and use the value for setting the
+     * initial master mute across all HALs.  HALs which do not support this
+     * method may leave it set to NULL.
+     */
+    int (*get_master_mute)(struct audio_hw_device *dev, bool *mute);
+#endif
 };
 typedef struct audio_hw_device audio_hw_device_t;
 
@@ -593,6 +638,14 @@ static inline int audio_hw_device_close(struct audio_hw_device* device)
 }
 
 #ifdef QCOM_HARDWARE
+/** Structure to save buffer information for applying effects for
+ *  LPA buffers */
+struct buf_info {
+    int bufsize;
+    int nBufs;
+    int **buffers;
+};
+
 #ifdef __cplusplus
 /**
  *Observer class to post the Events from HAL to Flinger

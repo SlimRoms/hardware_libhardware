@@ -76,8 +76,16 @@ enum {
     GRALLOC_USAGE_HW_FB                 = 0x00001000,
     /* buffer will be used with the HW video encoder */
     GRALLOC_USAGE_HW_VIDEO_ENCODER      = 0x00010000,
+    /* buffer will be written by the HW camera pipeline */
+    GRALLOC_USAGE_HW_CAMERA_WRITE       = 0x00020000,
+    /* buffer will be read by the HW camera pipeline */
+    GRALLOC_USAGE_HW_CAMERA_READ        = 0x00040000,
+    /* buffer will be used as part of zero-shutter-lag queue */
+    GRALLOC_USAGE_HW_CAMERA_ZSL         = 0x00060000,
+    /* mask for the camera access values */
+    GRALLOC_USAGE_HW_CAMERA_MASK        = 0x00060000,
     /* mask for the software usage bit-mask */
-    GRALLOC_USAGE_HW_MASK               = 0x00011F00,
+    GRALLOC_USAGE_HW_MASK               = 0x00071F00,
 
     /* buffer should be displayed full-screen on an external display when
      * possible
@@ -101,15 +109,23 @@ enum {
 
 #ifdef EXYNOS4_ENHANCEMENTS
     /* SAMSUNG */
+    GRALLOC_USAGE_PRIVATE_NONECACHE     = 0x00800000,
+
     GRALLOC_USAGE_HW_FIMC1              = 0x01000000,
     GRALLOC_USAGE_HW_ION                = 0x02000000,
     GRALLOC_USAGE_YUV_ADDR              = 0x04000000,
+    GRALLOC_USAGE_CAMERA                = 0x08000000,
 
     /* SEC Private usage , for Overlay path at HWC */
     GRALLOC_USAGE_HWC_HWOVERLAY         = 0x20000000,
 #endif
 };
 
+enum {
+    /* Gralloc perform enums */
+    GRALLOC_MODULE_PERFORM_UPDATE_BUFFER_GEOMETRY = 0,
+    GRALLOC_MODULE_PERFORM_PRIVATE_START
+};
 /*****************************************************************************/
 
 /**
@@ -221,7 +237,7 @@ typedef struct gralloc_module_t {
 typedef struct alloc_device_t {
     struct hw_device_t common;
 
-#ifdef QCOM_HARDWARE
+#ifdef QCOM_BSP
     /*
      * (*allocSize)() Allocates a buffer in graphic memory with the requested
      * bufferSize parameter and returns a buffer_handle_t and the stride in
