@@ -17,22 +17,26 @@
 #define LOG_TAG "radio_hw_stub"
 #define LOG_NDEBUG 0
 
-#include <string.h>
-#include <stdlib.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
-#include <cutils/log.h>
+
 #include <cutils/list.h>
-#include <system/radio.h>
-#include <system/radio_metadata.h>
+#include <log/log.h>
+
 #include <hardware/hardware.h>
 #include <hardware/radio.h>
+#include <system/radio.h>
+#include <system/radio_metadata.h>
 
 static const radio_hal_properties_t hw_properties = {
     .class_id = RADIO_CLASS_AM_FM,
@@ -319,6 +323,7 @@ static void *callback_thread_loop(void *context)
 
                 case CMD_CONFIG: {
                     tuner->config = cmd->config;
+                    tuner->config.antenna_connected = true;
                     event.type = RADIO_EVENT_CONFIG;
                     event.config = tuner->config;
                     ALOGV("%s CMD_CONFIG type %d low %d up %d",
@@ -633,8 +638,6 @@ exit:
 static int rdev_get_properties(const struct radio_hw_device *dev,
                                 radio_hal_properties_t *properties)
 {
-    struct stub_radio_device *rdev = (struct stub_radio_device *)dev;
-
     ALOGI("%s", __func__);
     if (properties == NULL)
         return -EINVAL;
@@ -656,6 +659,7 @@ static int rdev_open_tuner(const struct radio_hw_device *dev,
     pthread_mutex_lock(&rdev->lock);
 
     if (rdev->tuner != NULL) {
+        ALOGE("Can't open tuner twice");
         status = -ENOSYS;
         goto exit;
     }
@@ -749,7 +753,6 @@ static int rdev_open(const hw_module_t* module, const char* name,
                      hw_device_t** device)
 {
     struct stub_radio_device *rdev;
-    int ret;
 
     if (strcmp(name, RADIO_HARDWARE_DEVICE) != 0)
         return -EINVAL;
